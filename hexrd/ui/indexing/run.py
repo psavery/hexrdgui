@@ -1,6 +1,6 @@
 import numpy as np
 
-from PySide2.QtCore import QObject, QThreadPool, Signal
+from PySide2.QtCore import QObject, Signal
 from PySide2.QtWidgets import QMessageBox
 
 from hexrd import indexer, instrument
@@ -11,7 +11,7 @@ from hexrd.findorientations import (
 from hexrd.fitgrains import fit_grains
 from hexrd.xrdutil import EtaOmeMaps, _memo_hkls
 
-from hexrd.ui.async_worker import AsyncWorker
+from hexrd.ui.async_runner import AsyncRunner
 from hexrd.ui.hexrd_config import HexrdConfig
 from hexrd.ui.indexing.create_config import create_indexing_config
 from hexrd.ui.indexing.fit_grains_options_dialog import FitGrainsOptionsDialog
@@ -20,7 +20,7 @@ from hexrd.ui.indexing.fit_grains_select_dialog import FitGrainsSelectDialog
 from hexrd.ui.indexing.ome_maps_select_dialog import OmeMapsSelectDialog
 from hexrd.ui.indexing.ome_maps_viewer_dialog import OmeMapsViewerDialog
 from hexrd.ui.indexing.utils import generate_grains_table
-from hexrd.ui.progress_dialog import ProgressDialog
+
 
 class Runner(QObject):
     progress_text = Signal(str)
@@ -29,20 +29,12 @@ class Runner(QObject):
         super().__init__(parent)
         self.parent = parent
 
-        self.thread_pool = QThreadPool(self.parent)
-        self.progress_dialog = ProgressDialog(self.parent)
-
+        self.async_runner = AsyncRunner(parent)
+        self.progress_dialog = self.async_runner.progress_dialog
         self.progress_text.connect(self.progress_dialog.setLabelText)
 
     def update_progress_text(self, text):
         self.progress_text.emit(text)
-
-    def on_async_error(self, t):
-        exctype, value, traceback = t
-        msg = f'An ERROR occurred: {exctype}: {value}.'
-        msg_box = QMessageBox(QMessageBox.Critical, 'Error', msg)
-        msg_box.setDetailedText(traceback)
-        msg_box.exec_()
 
 
 class IndexingRunner(Runner):
@@ -87,15 +79,9 @@ class IndexingRunner(Runner):
             config = create_indexing_config()
 
             # Setup to generate maps in background
-            self.progress_dialog.setWindowTitle('Generating Eta Omega Maps')
-            self.progress_dialog.setRange(0, 0)  # no numerical updates
-
-            worker = AsyncWorker(self.run_eta_ome_maps, config)
-            self.thread_pool.start(worker)
-
-            worker.signals.result.connect(self.ome_maps_loaded)
-            worker.signals.finished.connect(self.progress_dialog.accept)
-            self.progress_dialog.exec_()
+            self.async_runner.success_callback = self.ome_maps_loaded
+            self.async_runner.progress_title = 'Generating Eta Omega Maps'
+            self.async_runner.run(self.run_eta_ome_maps, config)
 
     def run_eta_ome_maps(self, config):
         self.ome_maps = generate_eta_ome_maps(config, save=False)
@@ -124,15 +110,9 @@ class IndexingRunner(Runner):
         filter_maps_if_requested(self.ome_maps, config)
 
         # Setup to run indexing in background
-        self.progress_dialog.setWindowTitle('Find Orientations')
-        self.progress_dialog.setRange(0, 0)  # no numerical updates
-
-        worker = AsyncWorker(self.run_indexer, config)
-        self.thread_pool.start(worker)
-
-        worker.signals.result.connect(self.start_fit_grains_runner)
-        worker.signals.finished.connect(self.progress_dialog.accept)
-        self.progress_dialog.exec_()
+        self.async_runner.success_callback = self.start_fit_grains_runner
+        self.async_runner.progress_title = 'Find Orientations'
+        self.async_runner.run(self.run_indexer, config)
 
     def run_indexer(self, config):
         # Generate the orientation fibers
@@ -264,16 +244,9 @@ class FitGrainsRunner(Runner):
 
     def fit_grains_options_accepted(self):
         # Setup to run in background
-        self.progress_dialog.setWindowTitle('Running Fit Grains')
-        self.progress_dialog.setRange(0, 0)  # no numerical updates
-
-        worker = AsyncWorker(self.run_fit_grains)
-        self.thread_pool.start(worker)
-
-        worker.signals.result.connect(self.view_fit_grains_results)
-        worker.signals.error.connect(self.on_async_error)
-        worker.signals.finished.connect(self.progress_dialog.accept)
-        self.progress_dialog.exec_()
+        self.async_runner.progress_title = 'Running Fit Grains'
+        self.async_runner.success_callback = self.view_fit_grains_results
+        self.async_runner.run(self.view_fit_grains_results)
 
     def run_fit_grains(self):
         num_grains = self.grains_table.shape[0]

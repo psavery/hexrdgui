@@ -1,4 +1,3 @@
-import copy
 import functools
 import os
 import time
@@ -7,15 +6,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hexrd import imageseries
 
-from PySide2.QtCore import QObject, QThreadPool, Signal
+from PySide2.QtCore import QObject, Signal
 from PySide2.QtWidgets import QMessageBox
 
-from hexrd.ui.async_worker import AsyncWorker
+from hexrd.ui.async_runner import AsyncRunner
 from hexrd.ui.extra_ops_processed_image_series import (
     ExtraOpsProcessedImageSeries)
 from hexrd.ui.hexrd_config import HexrdConfig
 from hexrd.ui.image_file_manager import ImageFileManager
-from hexrd.ui.progress_dialog import ProgressDialog
 from hexrd.ui.constants import *
 
 
@@ -46,6 +44,9 @@ class ImageLoadManager(QObject, metaclass=Singleton):
     def __init__(self):
         super(ImageLoadManager, self).__init__(None)
         self.transformed_images = False
+        self.async_runner = AsyncRunner()
+        self.progress_dialog = self.async_runner.progress_dialog
+        self.progress_dialog.setRange(0, 100)
 
     def load_images(self, fnames):
         files = self.explict_selection(fnames)
@@ -146,22 +147,12 @@ class ImageLoadManager(QObject, metaclass=Singleton):
         self.update_status = HexrdConfig().live_update
         self.live_update_status.emit(False)
 
-        # Create threads and loading dialog
-        thread_pool = QThreadPool(self.parent)
-        progress_dialog = ProgressDialog(self.parent)
-        progress_dialog.setWindowTitle('Loading Processed Imageseries')
-        self.progress_text.connect(progress_dialog.setLabelText)
-        self.progress_dialog = progress_dialog
-
-        # Start processing in background
-        worker = AsyncWorker(self.process_ims, postprocess)
-        thread_pool.start(worker)
-
-        worker.signals.progress.connect(progress_dialog.setValue)
-        # On completion load imageseries nd close loading dialog
-        worker.signals.result.connect(self.finish_processing_ims)
-        worker.signals.finished.connect(progress_dialog.accept)
-        progress_dialog.exec_()
+        # Run in background with progress updates
+        self.async_runner.success_callback = self.finish_processing_ims
+        self.async_runner.progress_title = 'Loading Processed Imageseries'
+        self.async_runner.progress_callback = 'default'
+        self.progress_text.connect(self.progress_dialog.setLabelText)
+        self.async_runner.run(self.process_ims, postprocess)
 
     def set_state(self, state=None):
         if state is None:

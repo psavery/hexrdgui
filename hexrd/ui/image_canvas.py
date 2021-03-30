@@ -1,8 +1,7 @@
 import copy
 import math
 
-from PySide2.QtCore import QThreadPool, QTimer
-from PySide2.QtWidgets import QMessageBox
+from PySide2.QtCore import QTimer
 
 from matplotlib.backends.backend_qt5agg import FigureCanvas
 
@@ -14,7 +13,7 @@ import numpy as np
 
 from hexrd.transforms.xfcapi import mapAngle
 
-from hexrd.ui.async_worker import AsyncWorker
+from hexrd.ui.async_runner import AsyncRunner
 from hexrd.ui.calibration.cartesian_plot import cartesian_viewer
 from hexrd.ui.calibration.polar_plot import polar_viewer
 from hexrd.ui.calibration.raw_iviewer import raw_iviewer
@@ -53,7 +52,7 @@ class ImageCanvas(FigureCanvas):
         self.polar_res_config = HexrdConfig().config['image']['polar'].copy()
 
         # Set up our async stuff
-        self.thread_pool = QThreadPool(parent)
+        self.async_runner = AsyncRunner(parent)
 
         if image_names is not None:
             self.load_images(image_names)
@@ -487,12 +486,9 @@ class ImageCanvas(FigureCanvas):
             self.axes_images.clear()
 
         # Run the view generation in a background thread
-        worker = AsyncWorker(cartesian_viewer)
-        self.thread_pool.start(worker)
-
-        # Get the results and close the progress dialog when finished
-        worker.signals.result.connect(self.finish_show_cartesian)
-        worker.signals.error.connect(self.async_worker_error)
+        self.async_runner.success_callback = self.finish_show_cartesian
+        self.async_runner.error_callback = self.async_runner_error
+        self.async_runner.run(cartesian_viewer)
 
     def finish_show_cartesian(self, iviewer):
         self.iviewer = iviewer
@@ -542,12 +538,9 @@ class ImageCanvas(FigureCanvas):
         self.polar_res_config = polar_res_config.copy()
 
         # Run the view generation in a background thread
-        worker = AsyncWorker(polar_viewer)
-        self.thread_pool.start(worker)
-
-        # Get the results and close the progress dialog when finished
-        worker.signals.result.connect(self.finish_show_polar)
-        worker.signals.error.connect(self.async_worker_error)
+        self.async_runner.success_callback = self.finish_show_polar
+        self.async_runner.error_callback = self.async_runner_error
+        self.async_runner.run(polar_viewer)
 
     def finish_show_polar(self, iviewer):
         self.iviewer = iviewer
@@ -634,8 +627,8 @@ class ImageCanvas(FigureCanvas):
         self.update_azimuthal_integral_plot()
         self.update_overlays()
 
-    def async_worker_error(self, error):
-        QMessageBox.critical(self, 'HEXRD', str(error[1]))
+    def async_runner_error(self, t):
+        self.async_runner.on_async_error(t)
         msg = f'{str(self.mode)} view error!'
         HexrdConfig().emit_update_status_bar(msg)
 

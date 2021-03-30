@@ -1,13 +1,13 @@
 import copy
 
-from PySide2.QtCore import QCoreApplication, QObject, QThreadPool, Signal
+from PySide2.QtCore import QCoreApplication, QObject, Signal
 
 from hexrd.WPPF import Rietveld
 
+from hexrd.ui.async_runner import AsyncRunner
 from hexrd.ui.calibration.wppf_options_dialog import WppfOptionsDialog
 from hexrd.ui.constants import OverlayType
 from hexrd.ui.hexrd_config import HexrdConfig
-from hexrd.ui.progress_dialog import ProgressDialog
 
 
 class WppfRunner(QObject):
@@ -17,9 +17,7 @@ class WppfRunner(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.thread_pool = QThreadPool(self)
-        self.progress_dialog = ProgressDialog(parent)
-        self.progress_text.connect(self.progress_dialog.setLabelText)
+        self.async_runner = AsyncRunner(parent)
 
     def clear(self):
         self.wppf_options_dialog = None
@@ -61,15 +59,9 @@ class WppfRunner(QObject):
         self.wppf_finished()
 
         # Run WPPF in a background thread
-        # self.progress_dialog.setWindowTitle('Running WPPF')
-        # self.progress_dialog.setRange(0, 0)  # no numerical updates
-
-        # worker = AsyncWorker(self.run_wppf)
-        # self.thread_pool.start(worker)
-
-        # worker.signals.result.connect(self.wppf_finished)
-        # worker.signals.finished.connect(self.progress_dialog.accept)
-        # self.progress_dialog.exec_()
+        # self.async_runner.progress_title = 'Running WPPF'
+        # self.async_runner.success_callback = self.wppf_finished
+        # self.async_runner.run(self.run_wppf)
 
     def run_wppf(self):
         dialog = self.wppf_options_dialog
