@@ -20,17 +20,22 @@ class AsyncRunner:
 
         self.reset_callbacks()
 
-    def run(self, f):
-        worker = AsyncWorker(f)
+    def run(self, f, *args, **kwargs):
+        worker = AsyncWorker(f, *args, **kwargs)
         self.thread_pool.start(worker)
 
         if self.success_callback:
             worker.signals.result.connect(self.success_callback)
 
-        if self.error_callback:
-            worker.signals.error.connect(self.error_callback)
-        else:
+        if self.progress_callback == 'default':
+            worker.signals.progress.connect(self.progress_dialog.setValue)
+        elif self.progress_callback:
+            worker.signals.progress.connect(self.progress_callback)
+
+        if self.error_callback == 'default':
             worker.signals.error.connect(self.on_async_error)
+        elif self.error_callback:
+            worker.signals.error.connect(self.error_callback)
 
         worker.signals.finished.connect(self.reset_callbacks)
         worker.signals.finished.connect(self.progress_dialog.accept)
@@ -38,7 +43,8 @@ class AsyncRunner:
 
     def reset_callbacks(self):
         self.success_callback = None
-        self.error_callback = None
+        self.progress_callback = 'default'
+        self.error_callback = 'default'
 
     @property
     def progress_title(self):
