@@ -8,14 +8,13 @@ from PySide2.QtWidgets import (
 
 from hexrd.material import _angstroms, _kev, Material
 from hexrd.xrdutil.phutil import (
-    polar_tth_corr_map_rygg_pinhole, JHEPinholeDistortion,
-    RyggPinholeDistortion, SampleLayerDistortion, tth_corr_map_pinhole,
-    tth_corr_map_rygg_pinhole, tth_corr_map_sample_layer,
+    JHEPinholeDistortion, RyggPinholeDistortion, SampleLayerDistortion,
 )
 
 from hexrd.ui.create_hedm_instrument import create_hedm_instrument
 from hexrd.ui.hexrd_config import HexrdConfig
 from hexrd.ui.pinhole_panel_buffer import generate_pinhole_panel_buffer
+from hexrd.ui.polar_distortion_object import PolarDistortionObject
 from hexrd.ui.ui_loader import UiLoader
 from hexrd.ui.utils import block_signals
 
@@ -527,8 +526,7 @@ class PinholeCorrectionEditor(QObject):
     @apply_to_polar_view.setter
     def apply_to_polar_view(self, b):
         if b:
-            instr = create_hedm_instrument()
-            obj = PolarDistortionObject(instr, self.correction_type,
+            obj = PolarDistortionObject(self.correction_type,
                                         self.correction_kwargs)
             HexrdConfig().custom_polar_tth_distortion_object = obj
         else:
@@ -545,12 +543,12 @@ class PinholeCorrectionEditor(QObject):
             return
 
         any_changes = False
-        if obj.tth_distortion_type != self.correction_type:
-            obj.tth_distortion_type = self.correction_type
+        if obj.pinhole_distortion_type != self.correction_type:
+            obj.pinhole_distortion_type = self.correction_type
             any_changes = True
 
-        if obj.tth_distortion_kwargs != self.correction_kwargs:
-            obj.tth_distortion_kwargs = self.correction_kwargs
+        if obj.pinhole_distortion_kwargs != self.correction_kwargs:
+            obj.pinhole_distortion_kwargs = self.correction_kwargs
             any_changes = True
 
         if any_changes:
@@ -565,95 +563,3 @@ TYPE_MAP = {
     'RyggPinholeDistortion': RyggPinholeDistortion,
 }
 REVERSED_TYPE_MAP = {v: k for k, v in TYPE_MAP.items()}
-
-
-class PolarDistortionObject:
-    """This is a custom object for applying distortion to the polar view
-
-    We need the following properties defined:
-
-    1. has_polar_tth_displacement_field
-    2. create_polar_tth_displacement_field
-       (if has_polar_tth_displacement_field is True)
-    3. tth_displacement_field
-       (if has_polar_tth_displacement_field is False)
-
-    If we have these defined, we can set this object on
-    HexrdConfig().polar_tth_distortion_object and use it for applying
-    a tth distortion to the polar view.
-    """
-    def __init__(self, instr, tth_distortion_type, tth_distortion_kwargs):
-        self.instr = instr
-        self.tth_distortion_type = tth_distortion_type
-        self.tth_distortion_kwargs = tth_distortion_kwargs
-
-    @property
-    def has_tth_distortion(self):
-        return self.tth_distortion_type is not None
-
-    @property
-    def has_polar_tth_displacement_field(self):
-        """
-        Whether or not we can directly generate the polar tth displacement
-        field by calling the `create_polar_tth_displacement_field()` function.
-
-        If we can't, then we must perform self.tth_displacement_field first,
-        and then warp the images to the polar view.
-        """
-        rets = {
-            'JHEPinholeDistortion': False,
-            'RyggPinholeDistortion': True,
-            'SampleLayerDistortion': False,
-        }
-
-        if self.tth_distortion_type not in rets:
-            raise NotImplementedError(self.tth_distortion_type)
-
-        return rets[self.tth_distortion_type]
-
-    @property
-    def tth_displacement_field(self):
-        """
-        This returns a dictionary of panel names where the values
-        are the displacement fields for the panels.
-        The displacement field will be the same size as the panel in pixels.
-        This can be taken and warped into the polar view.
-        Or, if there is a polar_tth_displacement_field available for this
-        distortion type, that can be used to directly generate the polar
-        tth displacement field.
-        """
-        funcs = {
-            'JHEPinholeDistortion': tth_corr_map_pinhole,
-            'RyggPinholeDistortion': tth_corr_map_rygg_pinhole,
-            'SampleLayerDistortion': tth_corr_map_sample_layer,
-        }
-
-        if self.tth_distortion_type not in funcs:
-            raise NotImplementedError(self.tth_distortion_type)
-
-        f = funcs[self.tth_distortion_type]
-
-        kwargs = {
-            'instrument': self.instr,
-            **self.tth_distortion_kwargs,
-        }
-
-        return f(**kwargs)
-
-    def create_polar_tth_displacement_field(self, tth, eta):
-        """Directly create the polar tth displacement field.
-
-        If we are trying to create a polar tth displacement field, this
-        is more direct and more efficient than first obtaining the
-        `self.tth_displacement_field` and then warping it to the polar view.
-
-        For the Rygg pinhole distortion, this is significantly more efficient.
-        """
-        if self.tth_distortion_type == 'RyggPinholeDistortion':
-            kwargs = {
-                **self.tth_distortion_kwargs,
-                'instrument': self.instr,
-            }
-            return polar_tth_corr_map_rygg_pinhole(tth, eta, **kwargs)
-
-        raise NotImplementedError(self.tth_distortion_type)
