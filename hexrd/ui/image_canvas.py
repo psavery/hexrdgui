@@ -35,6 +35,7 @@ class ImageCanvas(FigureCanvas):
         super().__init__(self.figure)
 
         self.raw_axes = {}  # only used for raw currently
+        self.raw_axes_sums = {}
         self.axes_images = []
         self.overlay_artists = {}
         self.cached_detector_borders = []
@@ -109,6 +110,7 @@ class ImageCanvas(FigureCanvas):
     def clear_figure(self):
         self.figure.clear()
         self.raw_axes.clear()
+        self.raw_axes_sums.clear()
         self.axes_images.clear()
         self.remove_all_overlay_artists()
         self.clear_azimuthal_integral_axis()
@@ -130,12 +132,47 @@ class ImageCanvas(FigureCanvas):
         while self.auto_picked_data_artists:
             self.auto_picked_data_artists.pop(0).remove()
 
+    def create_raw_subplots(self, image_names):
+        cols = 1
+        if len(image_names) > 1:
+            cols = 2
+
+        rows = math.ceil(len(image_names) / cols)
+
+        grid = self.figure.add_gridspec(6 * rows - 1, 6 * cols - 1)
+
+        subplots = {}
+        for i, name in enumerate(image_names):
+            col = (i % cols) * 6
+            row = (i // cols) * 6
+
+            image = self.figure.add_subplot(grid[row:row + 4, col:col + 4])
+            sum_y = self.figure.add_subplot(grid[row + 4:row + 5, col:col + 4], sharex=image)
+            sum_x = self.figure.add_subplot(grid[row:row + 4, col + 4:col + 5], sharey=image)
+
+            sum_y.set_autoscalex_on(False)
+            sum_x.set_autoscaley_on(False)
+
+            image.tick_params(labelbottom=False)
+            sum_x.tick_params(labelleft=False)
+
+            subplots[name] = {
+                'image': image,
+                'sum_y': sum_y,
+                'sum_x': sum_x,
+            }
+
+        return subplots
+
     def load_images(self, image_names):
         HexrdConfig().emit_update_status_bar('Loading image view...')
 
-        if (self.mode != ViewType.raw or
-                len(image_names) != len(self.axes_images)):
-            # Either we weren't in image mode before, we have a different
+        reset_axes = (
+            self.mode != ViewType.raw or
+            len(image_names) != len(self.axes_images)
+        )
+        if reset_axes:
+            # Either we weren't in the raw mode before, we have a different
             # number of images, or there are masks to apply. Clear and re-draw.
             self.clear()
             self.mode = ViewType.raw
@@ -144,15 +181,11 @@ class ImageCanvas(FigureCanvas):
             # This will be used for drawing the rings
             self.iviewer = raw_iviewer()
 
-            cols = 1
-            if len(image_names) > 1:
-                cols = 2
-
-            rows = math.ceil(len(image_names) / cols)
+            subplots = self.create_raw_subplots(image_names)
 
             for i, name in enumerate(image_names):
                 img = images_dict[name]
-                axis = self.figure.add_subplot(rows, cols, i + 1)
+                axis = subplots[name]['image']
                 axis.set_title(name)
                 kwargs = {
                     'X': img,
@@ -164,13 +197,27 @@ class ImageCanvas(FigureCanvas):
                 axis.autoscale(False)
                 self.raw_axes[name] = axis
 
-            self.figure.tight_layout()
+                self.raw_axes_sums.setdefault(name, [])
+                if 'sum_y' in subplots[name]:
+                    axis = subplots[name]['sum_y']
+                    x = np.arange(img.shape[0])
+                    y = img.sum(axis=1)
+                    self.raw_axes_sums[name].append(axis.plot(x, y)[0])
+
+                if 'sum_x' in subplots[name]:
+                    axis = subplots[name]['sum_x']
+                    x = img.sum(axis=0)
+                    y = np.arange(img.shape[1])
+                    self.raw_axes_sums[name].append(axis.plot(x, y)[0])
+
+            QTimer.singleShot(0, self.figure.tight_layout)
         else:
             images_dict = self.scaled_image_dict
             for i, name in enumerate(image_names):
                 img = images_dict[name]
                 self.axes_images[i].set_data(img)
 
+        self.figure.tight_layout()
         # This will call self.draw_idle()
         self.show_saturation()
 
@@ -802,7 +849,7 @@ class ImageCanvas(FigureCanvas):
         # in the "View" menu?
         # if HexrdConfig().polar_show_azimuthal_integral
         if True:
-            # The top image will have 2x the height of the bottom image
+            # The top image will have 3x the height of the bottom image
             grid = plt.GridSpec(4, 1)
 
             # It is important to persist the plot so that we don't reset the
